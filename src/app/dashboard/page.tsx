@@ -12,8 +12,11 @@ import {
   Task 
 } from "@/lib/services/tasks";
 import { 
-  getAttendanceForDates, 
-  setAttendance 
+  getSubjectAttendance, 
+  addSubject, 
+  updateSubjectAttendance, 
+  deleteSubject,
+  SubjectAttendance
 } from "@/lib/services/attendance";
 
 export default function Dashboard() {
@@ -22,7 +25,9 @@ export default function Dashboard() {
 
   // State
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [attendance, setAttendanceState] = useState<Record<string, string>>({});
+  const [subjects, setSubjects] = useState<SubjectAttendance[]>([]);
+  const [newSubjectName, setNewSubjectName] = useState("");
+  const [showAddSubject, setShowAddSubject] = useState(false);
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   
@@ -39,57 +44,69 @@ export default function Dashboard() {
     }
   }, [user, loading, router]);
 
-  // Generate last 7 days ending today
-  const last7Days = useMemo(() => {
-    const list = [];
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const dateStr = d.toISOString().split("T")[0];
-      const dayLabel = d.toLocaleDateString("en-US", { weekday: "short" }); // "Mon", "Tue"
-      const dayInitial = d.toLocaleDateString("en-US", { weekday: "narrow" }); // "M", "T"
-      list.push({ dateStr, dayLabel, dayInitial });
-    }
-    return list;
-  }, []);
-
-  // Fetch Attendance data
-  const fetchAttendance = useCallback(async () => {
+  // Fetch Subject Attendance data
+  const fetchSubjects = useCallback(async () => {
     if (!user) return;
-    const dates = last7Days.map(d => d.dateStr);
-    const records = await getAttendanceForDates(user.uid, dates);
-    setAttendanceState(records);
-  }, [user, last7Days]);
+    const subs = await getSubjectAttendance(user.uid);
+    setSubjects(subs);
+  }, [user]);
 
-  // Subscribe to tasks
+  // Subscribe to tasks and fetch subjects
   useEffect(() => {
     if (!user) return;
     
-    fetchAttendance();
+    fetchSubjects();
     const unsubscribe = subscribeToTasks(user.uid, (fetchedTasks) => {
       setTasks(fetchedTasks);
     });
 
     return () => unsubscribe();
-  }, [user, fetchAttendance]);
+  }, [user, fetchSubjects]);
 
-  // Cycle Attendance Status: none -> present -> absent -> none
-  const toggleAttendance = async (dateStr: string) => {
-    if (!user) return;
-    const current = attendance[dateStr] || "none";
-    let nextStatus: "present" | "absent" | "none" = "present";
-
-    if (current === "present") nextStatus = "absent";
-    else if (current === "absent") nextStatus = "none";
-
-    // Optimistic UI update
-    setAttendanceState(prev => ({ ...prev, [dateStr]: nextStatus }));
+  // Handlers for Subject Attendance
+  const handleAddSubject = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !newSubjectName.trim()) return;
 
     try {
-      await setAttendance(user.uid, dateStr, nextStatus);
+      await addSubject(user.uid, newSubjectName.trim());
+      setNewSubjectName("");
+      setShowAddSubject(false);
+      fetchSubjects();
     } catch (error) {
-      console.error("Failed to update attendance:", error);
-      fetchAttendance(); // Rollback to actual db state
+      console.error("Failed to add subject:", error);
+    }
+  };
+
+  const handleUpdateSubjectCount = async (subId: string, presentChange: number, absentChange: number) => {
+    if (!user) return;
+    const sub = subjects.find((s) => s.id === subId);
+    if (!sub) return;
+
+    const newPresent = Math.max(0, sub.present + presentChange);
+    const newAbsent = Math.max(0, sub.absent + absentChange);
+
+    // Optimistic update
+    setSubjects((prev) =>
+      prev.map((s) => (s.id === subId ? { ...s, present: newPresent, absent: newAbsent } : s))
+    );
+
+    try {
+      await updateSubjectAttendance(user.uid, subId, newPresent, newAbsent);
+    } catch (error) {
+      console.error("Failed to update subject attendance:", error);
+      fetchSubjects();
+    }
+  };
+
+  const handleDeleteSubject = async (subId: string) => {
+    if (!user) return;
+    if (!confirm("Are you sure you want to delete this subject?")) return;
+    try {
+      await deleteSubject(user.uid, subId);
+      fetchSubjects();
+    } catch (error) {
+      console.error("Failed to delete subject:", error);
     }
   };
 
@@ -289,40 +306,111 @@ export default function Dashboard() {
               )}
             </div>
 
-            {/* Attendance Widget */}
-            <div className="bg-surface rounded-xl border border-outline-variant p-lg flex flex-col">
+            {/* Subject Attendance Widget */}
+            <div className="bg-surface rounded-xl border border-outline-variant p-lg flex flex-col min-h-[300px]">
               <div className="flex items-center justify-between mb-md pb-xs border-b border-outline-variant">
                 <h3 className="font-h3 text-h3 text-on-surface">Attendance</h3>
-                <span className="font-label-sm text-label-sm text-on-surface-variant">Last 7 Days</span>
+                <button 
+                  onClick={() => setShowAddSubject(!showAddSubject)}
+                  className="text-primary hover:text-[#436ca3] font-label-sm text-label-sm flex items-center gap-xs cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-[16px]">add</span> Add Subject
+                </button>
               </div>
-              <div className="flex justify-between items-center mt-auto gap-1">
-                {last7Days.map((day) => {
-                  const status = attendance[day.dateStr] || "none";
+
+              {showAddSubject && (
+                <form onSubmit={handleAddSubject} className="flex gap-sm items-center mb-sm bg-surface-container-low p-sm rounded border border-outline-variant">
+                  <input
+                    type="text"
+                    required
+                    placeholder="Subject name..."
+                    className="flex-1 bg-surface text-on-surface border border-outline-variant rounded px-sm py-1 font-body-sm text-body-sm focus:border-primary focus:outline-none"
+                    value={newSubjectName}
+                    onChange={(e) => setNewSubjectName(e.target.value)}
+                  />
+                  <button
+                    type="submit"
+                    className="bg-[#507DBC] text-white hover:bg-[#436ca3] font-label-sm text-label-sm px-sm py-1 rounded cursor-pointer transition-colors"
+                  >
+                    Save
+                  </button>
+                </form>
+              )}
+
+              <div className="flex flex-col gap-sm overflow-y-auto max-h-[350px] pr-xs">
+                {subjects.map((sub) => {
+                  const total = sub.present + sub.absent;
+                  const percentage = total > 0 ? Math.round((sub.present / total) * 100) : 0;
                   return (
                     <div 
-                      key={day.dateStr} 
-                      onClick={() => toggleAttendance(day.dateStr)}
-                      className="flex flex-col items-center gap-xs cursor-pointer group flex-1 select-none"
+                      key={sub.id} 
+                      className="flex flex-col gap-xs py-sm border-b border-outline-variant/30 last:border-b-0 group"
                     >
-                      <span className="font-label-sm text-label-sm text-on-surface-variant group-hover:text-on-surface transition-colors">
-                        {day.dayInitial}
-                      </span>
-                      {status === "present" && (
-                        <div className="w-8 h-8 rounded-full bg-secondary-container border border-secondary flex items-center justify-center text-secondary transition-all">
-                          <span className="material-symbols-outlined text-[14px]">check</span>
+                      <div className="flex justify-between items-center">
+                        <span className="font-label-md text-label-md text-on-surface font-semibold truncate max-w-[180px]">
+                          {sub.name}
+                        </span>
+                        <div className="flex items-center gap-sm">
+                          <span className={`font-label-sm text-label-sm font-bold ${percentage >= 75 ? 'text-secondary' : 'text-error'}`}>
+                            {percentage}%
+                          </span>
+                          <button 
+                            onClick={() => handleDeleteSubject(sub.id)}
+                            className="opacity-0 group-hover:opacity-100 text-on-surface-variant hover:text-error transition-all p-0.5 rounded cursor-pointer"
+                          >
+                            <span className="material-symbols-outlined text-[14px]">delete</span>
+                          </button>
                         </div>
-                      )}
-                      {status === "absent" && (
-                        <div className="w-8 h-8 rounded-full bg-error-container/20 border border-error flex items-center justify-center text-error transition-all">
-                          <span className="material-symbols-outlined text-[14px]">close</span>
+                      </div>
+                      
+                      <div className="flex justify-between items-center text-[11px] text-on-surface-variant">
+                        <div className="flex items-center gap-xs">
+                          <span>Present: <strong className="text-on-surface">{sub.present}</strong></span>
+                          <div className="flex gap-0.5">
+                            <button 
+                              onClick={() => handleUpdateSubjectCount(sub.id, 1, 0)}
+                              className="w-4 h-4 bg-surface-container-high hover:bg-surface-bright rounded text-[10px] flex items-center justify-center font-bold cursor-pointer"
+                            >+</button>
+                            <button 
+                              onClick={() => handleUpdateSubjectCount(sub.id, -1, 0)}
+                              className="w-4 h-4 bg-surface-container-high hover:bg-surface-bright rounded text-[10px] flex items-center justify-center font-bold cursor-pointer"
+                            >-</button>
+                          </div>
                         </div>
-                      )}
-                      {status === "none" && (
-                        <div className="w-8 h-8 rounded-full bg-surface-container-high border border-outline-variant group-hover:border-primary transition-all"></div>
-                      )}
+                        <div className="flex items-center gap-xs">
+                          <span>Absent: <strong className="text-on-surface">{sub.absent}</strong></span>
+                          <div className="flex gap-0.5">
+                            <button 
+                              onClick={() => handleUpdateSubjectCount(sub.id, 0, 1)}
+                              className="w-4 h-4 bg-surface-container-high hover:bg-surface-bright rounded text-[10px] flex items-center justify-center font-bold cursor-pointer"
+                            >+</button>
+                            <button 
+                              onClick={() => handleUpdateSubjectCount(sub.id, 0, -1)}
+                              className="w-4 h-4 bg-surface-container-high hover:bg-surface-bright rounded text-[10px] flex items-center justify-center font-bold cursor-pointer"
+                            >-</button>
+                          </div>
+                        </div>
+                        <span className="text-[10px] font-semibold uppercase tracking-wider text-on-surface-variant/70">
+                          Total: {total}
+                        </span>
+                      </div>
+                      
+                      {/* Attendance Percentage Progress Bar */}
+                      <div className="w-full bg-surface-variant h-1 rounded-full overflow-hidden mt-xs">
+                        <div 
+                          className={`h-full transition-all duration-300 ${percentage >= 75 ? 'bg-secondary' : 'bg-error'}`} 
+                          style={{ width: `${percentage}%` }}
+                        ></div>
+                      </div>
                     </div>
                   );
                 })}
+
+                {subjects.length === 0 && (
+                  <div className="text-on-surface-variant text-body-sm italic text-center py-lg">
+                    No subjects added. Click "Add Subject" to begin tracking.
+                  </div>
+                )}
               </div>
             </div>
           </div>
