@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 
 interface NavigationProps {
-  activeTab: "home" | "calendar" | "settings";
+  activeTab: "home" | "calendar" | "settings" | "attendance";
   children: React.ReactNode;
 }
 
@@ -78,6 +78,25 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, children }) =
               calendar_today
             </span>
             <span className="font-label-md text-label-md group-hover:text-on-surface">Calendar</span>
+          </Link>
+
+          <Link
+            href="/attendance-calculator"
+            className={`flex items-center gap-sm px-sm py-xs rounded hover:bg-surface-bright transition-colors group ${
+              activeTab === "attendance"
+                ? "text-primary border-r-2 border-primary"
+                : "text-on-surface-variant"
+            }`}
+          >
+            <span
+              className={`material-symbols-outlined text-[20px] ${
+                activeTab === "attendance" ? "text-primary" : "text-on-surface-variant group-hover:text-on-surface"
+              }`}
+              style={activeTab === "attendance" ? { fontVariationSettings: "'FILL' 1" } : undefined}
+            >
+              percent
+            </span>
+            <span className="font-label-md text-label-md group-hover:text-on-surface">Attendance</span>
           </Link>
 
           <Link
@@ -160,6 +179,21 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, children }) =
               calendar_month
             </span>
             <span className="text-[11px] font-semibold mt-1">Calendar</span>
+          </Link>
+
+          <Link
+            href="/attendance-calculator"
+            className={`flex flex-col items-center justify-center p-2 rounded flex-1 h-full active:bg-surface-container-high transition-transform active:scale-95 ${
+              activeTab === "attendance" ? "text-primary font-bold" : "text-on-surface-variant"
+            }`}
+          >
+            <span
+              className="material-symbols-outlined text-[24px]"
+              style={activeTab === "attendance" ? { fontVariationSettings: "'FILL' 1" } : undefined}
+            >
+              percent
+            </span>
+            <span className="text-[11px] font-semibold mt-1">Attendance</span>
           </Link>
 
           <Link
