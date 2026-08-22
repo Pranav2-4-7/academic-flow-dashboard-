@@ -16,6 +16,29 @@ export default function Calendar() {
   const { user, loading } = useAuth();
   const router = useRouter();
 
+  // Helper to render descriptions with clickable links
+  const renderDescriptionWithLinks = (text: string) => {
+    if (!text) return null;
+    const urlRegex = /(https?:\/\/[^\s]+)/g;
+    const parts = text.split(urlRegex);
+    return parts.map((part, index) => {
+      if (part.match(urlRegex)) {
+        return (
+          <a
+            key={index}
+            href={part}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-primary hover:underline font-medium break-all"
+          >
+            {part}
+          </a>
+        );
+      }
+      return part;
+    });
+  };
+
   // State
   const [tasks, setTasks] = useState<Task[]>([]);
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
@@ -489,8 +512,8 @@ export default function Calendar() {
                   </button>
                 </div>
                 {task.description && (
-                  <p className="font-body-sm text-body-sm text-on-surface-variant pl-10">
-                    {task.description}
+                  <p className="font-body-sm text-body-sm text-on-surface-variant pl-10 whitespace-pre-line">
+                    {renderDescriptionWithLinks(task.description)}
                   </p>
                 )}
               </div>
