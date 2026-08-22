@@ -41,38 +41,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        setUser(firebaseUser);
-        setIsGuest(false);
-        
-        // Sync user info into Firestore
-        const userRef = doc(db, "users", firebaseUser.uid);
-        const docSnap = await getDoc(userRef);
-        
-        let existingIcsUrl = null;
-        if (docSnap.exists()) {
-          existingIcsUrl = docSnap.data().courseraIcsUrl || null;
-          setCourseraIcsUrl(existingIcsUrl);
-        }
+      try {
+        if (firebaseUser) {
+          setUser(firebaseUser);
+          setIsGuest(false);
+          
+          // Sync user info into Firestore
+          const userRef = doc(db, "users", firebaseUser.uid);
+          const docSnap = await getDoc(userRef);
+          
+          let existingIcsUrl = null;
+          if (docSnap.exists()) {
+            existingIcsUrl = docSnap.data().courseraIcsUrl || null;
+            setCourseraIcsUrl(existingIcsUrl);
+          }
 
-        await setDoc(
-          userRef,
-          {
-            uid: firebaseUser.uid,
-            email: firebaseUser.email,
-            displayName: firebaseUser.displayName,
-            photoURL: firebaseUser.photoURL,
-            courseraIcsUrl: existingIcsUrl,
-            updatedAt: new Date().toISOString(),
-          },
-          { merge: true }
-        );
-      } else {
-        setUser(null);
-        setCourseraIcsUrl(null);
-        setIsGuest(false);
+          await setDoc(
+            userRef,
+            {
+              uid: firebaseUser.uid,
+              email: firebaseUser.email,
+              displayName: firebaseUser.displayName,
+              photoURL: firebaseUser.photoURL,
+              courseraIcsUrl: existingIcsUrl,
+              updatedAt: new Date().toISOString(),
+            },
+            { merge: true }
+          );
+        } else {
+          setUser(null);
+          setCourseraIcsUrl(null);
+          setIsGuest(false);
+        }
+      } catch (error) {
+        console.error("Auth context initialization failed:", error);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     });
 
     return () => unsubscribe();
