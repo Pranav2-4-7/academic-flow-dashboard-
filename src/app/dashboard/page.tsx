@@ -36,6 +36,34 @@ export default function Dashboard() {
   const [newTaskDesc, setNewTaskDesc] = useState("");
   const [newTaskCategory, setNewTaskCategory] = useState<Task["category"]>("Native");
   const [newTaskDueDate, setNewTaskDueDate] = useState("");
+  const [isSyncingGmail, setIsSyncingGmail] = useState(false);
+  const [gmailSyncStatus, setGmailSyncStatus] = useState<string | null>(null);
+
+  const handleSyncGmail = async () => {
+    if (!user) return;
+    setIsSyncingGmail(true);
+    setGmailSyncStatus(null);
+    try {
+      const res = await fetch("/api/sync/gmail", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: user.uid }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setGmailSyncStatus(`Synced ${data.count || 0} classes & webinars!`);
+        setTimeout(() => setGmailSyncStatus(null), 4000);
+      } else {
+        setGmailSyncStatus(data.error || "Sync failed");
+        setTimeout(() => setGmailSyncStatus(null), 4000);
+      }
+    } catch (err) {
+      setGmailSyncStatus("Sync failed");
+      setTimeout(() => setGmailSyncStatus(null), 4000);
+    } finally {
+      setIsSyncingGmail(false);
+    }
+  };
 
   // Redirect if not logged in
   useEffect(() => {
@@ -163,14 +191,43 @@ export default function Dashboard() {
 
   // Calculate Up Next Class from active tasks
   const nextClass = useMemo(() => {
-    // Find next pending class (Gmail/Coursera event) sorted by due date
-    const classes = tasks.filter(t => 
-      t.status === "todo" && 
-      (t.category === "Gmail" || t.category === "Coursera" || t.title.toLowerCase().includes("class") || t.title.toLowerCase().includes("lecture")) &&
-      t.dueDate && new Date(t.dueDate) >= new Date()
-    );
+    const now = new Date();
+    const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
+    const classes = tasks
+      .filter(t => 
+        t.status === "todo" && 
+        (
+          t.category === "Gmail" || 
+          t.category === "Coursera" || 
+          t.title.toLowerCase().includes("class") || 
+          t.title.toLowerCase().includes("lecture") ||
+          t.title.toLowerCase().includes("webinar") ||
+          t.title.toLowerCase().includes("workshop")
+        ) &&
+        t.dueDate && new Date(t.dueDate).getTime() >= twoHoursAgo.getTime()
+      )
+      .sort((a, b) => new Date(a.dueDate!).getTime() - new Date(b.dueDate!).getTime());
     return classes.length > 0 ? classes[0] : null;
   }, [tasks]);
+
+  const classUrl = useMemo(() => {
+    if (!nextClass?.description) return null;
+    const match = nextClass.description.match(/(https?:\/\/[^\s"'<>]+)/);
+    return match ? match[0] : null;
+  }, [nextClass]);
+
+  const webinarId = useMemo(() => {
+    if (!nextClass?.description) return null;
+    const match = nextClass.description.match(/(?:Webinar|Meeting)\s*ID[:\s]+([0-9\s]+)/i);
+    return match ? match[1].trim() : null;
+  }, [nextClass]);
+
+  const isLiveNow = useMemo(() => {
+    if (!nextClass?.dueDate) return false;
+    const now = Date.now();
+    const classTime = new Date(nextClass.dueDate).getTime();
+    return now >= classTime - 15 * 60 * 1000 && now <= classTime + 2 * 60 * 60 * 1000;
+  }, [nextClass]);
 
   // Filtered Tasks for Search
   const filteredTasks = useMemo(() => {
@@ -269,40 +326,105 @@ export default function Dashboard() {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-lg">
             
             {/* Up Next Widget */}
-            <div className="lg:col-span-2 bg-surface rounded-xl border border-outline-variant p-lg flex flex-col sm:flex-row justify-between items-start sm:items-center gap-md relative overflow-hidden group">
+            <div className="lg:col-span-2 bg-surface rounded-xl border border-outline-variant p-lg flex flex-col justify-between gap-md relative overflow-hidden group">
               <div className="absolute -right-20 -top-20 w-64 h-64 bg-primary opacity-5 rounded-full blur-3xl pointer-events-none transition-opacity group-hover:opacity-10"></div>
-              <div>
-                <div className="flex items-center gap-xs mb-sm">
-                  <span className="w-2 h-2 rounded-full bg-error animate-pulse"></span>
-                  <span className="font-label-sm text-label-sm text-error uppercase tracking-wider">Live Now</span>
+              
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-md">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-sm mb-sm flex-wrap">
+                    {nextClass ? (
+                      isLiveNow ? (
+                        <div className="flex items-center gap-xs">
+                          <span className="w-2.5 h-2.5 rounded-full bg-error animate-pulse"></span>
+                          <span className="font-label-sm text-label-sm text-error uppercase tracking-wider font-bold">Live Now</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-xs">
+                          <span className="w-2.5 h-2.5 rounded-full bg-secondary"></span>
+                          <span className="font-label-sm text-label-sm text-secondary uppercase tracking-wider font-bold">
+                            Upcoming Session
+                          </span>
+                        </div>
+                      )
+                    ) : (
+                      <span className="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">
+                        Live Sessions
+                      </span>
+                    )}
+
+                    {nextClass?.category === "Gmail" && (
+                      <span className="bg-error/10 text-error border border-error/30 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                        <span className="material-symbols-outlined text-[12px]">mail</span>
+                        From Gmail
+                      </span>
+                    )}
+                  </div>
+
+                  {nextClass ? (
+                    <>
+                      <h2 className="font-h2 text-h2 text-on-surface mb-xs font-bold leading-snug line-clamp-2" title={nextClass.title}>
+                        {nextClass.title}
+                      </h2>
+                      <div className="flex flex-wrap items-center gap-md font-body-md text-body-md text-on-surface-variant">
+                        <p className="flex items-center gap-xs font-semibold text-primary">
+                          <span className="material-symbols-outlined text-[18px]">schedule</span>
+                          {nextClass.dueDate ? new Date(nextClass.dueDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "No time"}
+                          <span className="text-on-surface-variant font-normal">
+                            ({nextClass.dueDate ? new Date(nextClass.dueDate).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) : ""})
+                          </span>
+                        </p>
+                        {webinarId && (
+                          <p className="flex items-center gap-xs font-mono text-[12px] bg-surface-container px-2 py-0.5 rounded border border-outline-variant/40">
+                            <span className="material-symbols-outlined text-[14px]">tag</span>
+                            ID: {webinarId}
+                          </p>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <h2 className="font-h1 text-h1 text-on-surface mb-xs">No Live Classes</h2>
+                      <p className="font-body-md text-body-md text-on-surface-variant">
+                        Sync Coursera ICS or Gmail to view your upcoming live webinars and sessions.
+                      </p>
+                    </>
+                  )}
                 </div>
-                {nextClass ? (
-                  <>
-                    <h2 className="font-h1 text-h1 text-on-surface mb-xs truncate max-w-[320px] sm:max-w-[400px]">
-                      {nextClass.title}
-                    </h2>
-                    <p className="font-body-md text-body-md text-on-surface-variant flex items-center gap-xs">
-                      <span className="material-symbols-outlined text-[16px]">schedule</span>
-                      Due {nextClass.dueDate ? new Date(nextClass.dueDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "No time"}
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <h2 className="font-h1 text-h1 text-on-surface mb-xs">No Live Classes</h2>
-                    <p className="font-body-md text-body-md text-on-surface-variant">
-                      Sync Coursera ICS or Gmail to view live sessions.
-                    </p>
-                  </>
-                )}
+
+                <div className="flex items-center gap-sm shrink-0 w-full sm:w-auto justify-between sm:justify-end">
+                  <button
+                    onClick={handleSyncGmail}
+                    disabled={isSyncingGmail}
+                    title="Scan Gmail for new webinars and class links"
+                    className="p-2.5 rounded-lg border border-outline-variant hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface transition-colors flex items-center justify-center cursor-pointer disabled:opacity-50"
+                  >
+                    <span className={`material-symbols-outlined text-[20px] ${isSyncingGmail ? "animate-spin text-primary" : ""}`}>
+                      sync
+                    </span>
+                  </button>
+
+                  {nextClass && (
+                    <button 
+                      onClick={() => {
+                        if (classUrl) {
+                          window.open(classUrl, "_blank", "noopener,noreferrer");
+                        } else {
+                          router.push("/calendar");
+                        }
+                      }}
+                      className="flex-1 sm:flex-initial bg-[#507DBC] text-white font-label-md text-label-md px-6 py-3 rounded-lg hover:bg-[#436ca3] transition-all shrink-0 shadow-sm flex items-center justify-center gap-sm cursor-pointer active:scale-95"
+                    >
+                      <span>Join Webinar</span>
+                      <span className="material-symbols-outlined text-[18px]">open_in_new</span>
+                    </button>
+                  )}
+                </div>
               </div>
-              {nextClass && (
-                <button 
-                  onClick={() => router.push(nextClass.description.includes("http") ? nextClass.description : "/calendar")}
-                  className="bg-[#507DBC] text-white font-label-md text-label-md px-6 py-3 rounded-lg hover:bg-[#436ca3] transition-colors shrink-0 shadow-sm flex items-center gap-sm cursor-pointer"
-                >
-                  Join Class
-                  <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
-                </button>
+
+              {gmailSyncStatus && (
+                <div className="text-[12px] text-primary font-medium bg-primary/10 px-3 py-1.5 rounded-md border border-primary/20 w-fit">
+                  {gmailSyncStatus}
+                </div>
               )}
             </div>
 

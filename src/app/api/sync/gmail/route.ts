@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchGmailLiveClasses } from "@/lib/services/gmail";
+import { syncGmailClassesToFirestore } from "@/lib/services/gmail";
 
 export async function POST(req: NextRequest) {
   try {
@@ -8,20 +8,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing userId" }, { status: 400 });
     }
 
-    const emails = await fetchGmailLiveClasses(userId);
+    const tasks = await syncGmailClassesToFirestore(userId);
     
-    console.log(`[GMAIL SYNC] Fetched ${emails.length} matching Zoom/class emails for user ${userId}`);
-    
-    // As per instruction: "Stop here and wait for me to provide the Gemini API key for the extraction step."
+    console.log(`[GMAIL SYNC] Successfully synced ${tasks.length} live classes/webinars for user ${userId}`);
+
     return NextResponse.json({
       success: true,
-      message: `Gmail sync scaffolded: Fetched ${emails.length} matching emails. Ready for Gemini API Key extraction step.`,
-      emails: emails.map(e => ({
-        id: e.id,
-        subject: e.subject,
-        from: e.from,
-        date: e.date,
-        snippet: e.snippet
+      count: tasks.length,
+      message: `Successfully synced ${tasks.length} live classes and webinars from your Gmail!`,
+      tasks: tasks.map(t => ({
+        id: t.id,
+        title: t.title,
+        dueDate: t.dueDate,
+        joinUrl: t.joinUrl
       }))
     });
 
