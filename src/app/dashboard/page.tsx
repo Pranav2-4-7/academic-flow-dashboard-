@@ -192,22 +192,31 @@ export default function Dashboard() {
   // Calculate Up Next Class from active tasks
   const nextClass = useMemo(() => {
     const now = new Date();
-    const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
-    const classes = tasks
-      .filter(t => 
-        t.status === "todo" && 
-        (
-          t.category === "Gmail" || 
-          t.category === "Coursera" || 
-          t.title.toLowerCase().includes("class") || 
-          t.title.toLowerCase().includes("lecture") ||
-          t.title.toLowerCase().includes("webinar") ||
-          t.title.toLowerCase().includes("workshop")
-        ) &&
-        t.dueDate && new Date(t.dueDate).getTime() >= twoHoursAgo.getTime()
-      )
+    const classKeywords = ["class", "lecture", "webinar", "workshop"];
+    const isClassTask = (t: Task) => 
+      t.category === "Gmail" || 
+      t.category === "Coursera" || 
+      classKeywords.some(kw => t.title.toLowerCase().includes(kw));
+
+    const candidateClasses = tasks
+      .filter(t => t.status === "todo" && isClassTask(t) && t.dueDate)
       .sort((a, b) => new Date(a.dueDate!).getTime() - new Date(b.dueDate!).getTime());
-    return classes.length > 0 ? classes[0] : null;
+
+    // 1. First priority: any class scheduled for TODAY
+    const todayClasses = candidateClasses.filter(t => {
+      const d = new Date(t.dueDate!);
+      return d.toDateString() === now.toDateString();
+    });
+
+    if (todayClasses.length > 0) {
+      // Find the upcoming one today, or the latest one today if earlier
+      const upcomingToday = todayClasses.find(t => new Date(t.dueDate!).getTime() >= now.getTime() - 45 * 60 * 1000);
+      return upcomingToday || todayClasses[todayClasses.length - 1];
+    }
+
+    // 2. Next priority: upcoming future classes
+    const futureClasses = candidateClasses.filter(t => new Date(t.dueDate!).getTime() >= now.getTime() - 2 * 60 * 60 * 1000);
+    return futureClasses.length > 0 ? futureClasses[0] : null;
   }, [tasks]);
 
   const classUrl = useMemo(() => {
@@ -222,11 +231,23 @@ export default function Dashboard() {
     return match ? match[1].trim() : null;
   }, [nextClass]);
 
-  const isLiveNow = useMemo(() => {
-    if (!nextClass?.dueDate) return false;
+  const classStatusInfo = useMemo(() => {
+    if (!nextClass?.dueDate) return null;
     const now = Date.now();
     const classTime = new Date(nextClass.dueDate).getTime();
-    return now >= classTime - 15 * 60 * 1000 && now <= classTime + 2 * 60 * 60 * 1000;
+    const isToday = new Date(nextClass.dueDate).toDateString() === new Date().toDateString();
+
+    if (now >= classTime - 15 * 60 * 1000 && now <= classTime + 2 * 60 * 60 * 1000) {
+      return { label: "Live Now", isLive: true };
+    }
+    if (isToday) {
+      if (classTime > now) {
+        return { label: "Upcoming Today", isLive: false };
+      } else {
+        return { label: "Today's Session", isLive: false };
+      }
+    }
+    return { label: "Upcoming", isLive: false };
   }, [nextClass]);
 
   // Filtered Tasks for Search
@@ -332,17 +353,19 @@ export default function Dashboard() {
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-md">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-sm mb-sm flex-wrap">
-                    {nextClass ? (
-                      isLiveNow ? (
+                    {nextClass && classStatusInfo ? (
+                      classStatusInfo.isLive ? (
                         <div className="flex items-center gap-xs">
                           <span className="w-2.5 h-2.5 rounded-full bg-error animate-pulse"></span>
-                          <span className="font-label-sm text-label-sm text-error uppercase tracking-wider font-bold">Live Now</span>
+                          <span className="font-label-sm text-label-sm text-error uppercase tracking-wider font-bold">
+                            {classStatusInfo.label}
+                          </span>
                         </div>
                       ) : (
                         <div className="flex items-center gap-xs">
                           <span className="w-2.5 h-2.5 rounded-full bg-secondary"></span>
                           <span className="font-label-sm text-label-sm text-secondary uppercase tracking-wider font-bold">
-                            Upcoming Session
+                            {classStatusInfo.label}
                           </span>
                         </div>
                       )

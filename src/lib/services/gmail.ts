@@ -22,7 +22,12 @@ export interface ExtractedLiveClass {
   description: string;
 }
 
-function parseClassEmail(subject: string, htmlText: string, plainText: string, fallbackDate: string): ExtractedLiveClass | null {
+export function parseClassEmails(
+  subject: string, 
+  htmlText: string, 
+  plainText: string, 
+  fallbackDate: string
+): ExtractedLiveClass[] {
   const fullText = (htmlText + " " + plainText)
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/g, " ")
@@ -31,7 +36,6 @@ function parseClassEmail(subject: string, htmlText: string, plainText: string, f
 
   // 1. Extract Zoom / Google Meet / Teams link
   let joinUrl = "";
-  // Direct webinar / meeting join link priority
   const directZoomMatch = htmlText.match(/https?:\/\/[a-zA-Z0-9.-]*zoom\.us\/[wj]\/[^\s"'<>]+/i);
   if (directZoomMatch) {
     joinUrl = directZoomMatch[0];
@@ -49,42 +53,18 @@ function parseClassEmail(subject: string, htmlText: string, plainText: string, f
   const passcodeMatch = fullText.match(/Passcode[:\s]+([a-zA-Z0-9]+)/i) || fullText.match(/Password[:\s]+([a-zA-Z0-9]+)/i);
   const passcode = passcodeMatch ? passcodeMatch[1].trim() : undefined;
 
-  // 3. Extract Scheduled Date & Time
-  let scheduledDate: Date | null = null;
-  const dateTimeMatch = fullText.match(/((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4}\s+(?:at\s+)?\d{1,2}[:.]\d{2}\s*(?:AM|PM)(?:\s+India)?)/i);
-
-  if (dateTimeMatch) {
-    let rawDateStr = dateTimeMatch[1].replace(/India/i, "").trim();
-    // Use IST timezone (+05:30) if "India" or default
-    const parsed = new Date(rawDateStr + " GMT+0530");
-    if (!isNaN(parsed.getTime())) {
-      scheduledDate = parsed;
-    }
-  }
-
-  if (!scheduledDate && fallbackDate) {
-    const fb = new Date(fallbackDate);
-    if (!isNaN(fb.getTime())) {
-      scheduledDate = fb;
-    }
-  }
-
-  if (!scheduledDate) {
-    scheduledDate = new Date();
-  }
-
-  // Check if this looks like a live class / webinar / workshop
+  // Filter: must have join link or webinar ID or class/webinar keyword
   const isClassEmail = 
     joinUrl || 
     webinarId || 
     /webinar|workshop|live\s*class|zoom|google\s*meet/i.test(subject) ||
     /webinar|workshop|live\s*class|zoom/i.test(fullText.substring(0, 500));
 
-  if (!isClassEmail) {
-    return null;
+  if (!isClassEmail || (!joinUrl && !webinarId)) {
+    return [];
   }
 
-  // 4. Extract clean title
+  // 3. Extract clean title
   let cleanTitle = subject
     .replace(/^Fwd:\s*/i, "")
     .replace(/^Re:\s*/i, "")
@@ -92,18 +72,50 @@ function parseClassEmail(subject: string, htmlText: string, plainText: string, f
     .replace(/\s*Invitation:\s*/i, "")
     .trim();
 
+  // 4. Extract ALL Scheduled Dates & Times
+  const dateRegex = /(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4}\s+(?:at\s+)?\d{1,2}[:.]\d{2}\s*(?:AM|PM)(?:\s+India)?/gi;
+  const matches = [...fullText.matchAll(dateRegex)];
+
+  const results: ExtractedLiveClass[] = [];
   const descSummary = fullText.substring(0, 300).trim();
   const description = `${joinUrl ? `Join Link: ${joinUrl}\n` : ""}${webinarId ? `Webinar ID: ${webinarId} ` : ""}${passcode ? `| Passcode: ${passcode}\n` : "\n"}${descSummary}...`;
 
-  return {
-    id: "",
-    title: cleanTitle || "Live Class / Webinar",
-    joinUrl,
-    webinarId,
-    passcode,
-    scheduledDate,
-    description,
-  };
+  if (matches.length > 0) {
+    matches.forEach((m, idx) => {
+      let rawDateStr = m[0].replace(/India/i, "").trim();
+      const parsed = new Date(rawDateStr + " GMT+0530");
+      if (!isNaN(parsed.getTime())) {
+        const occurrenceTitle = matches.length > 1 ? `${cleanTitle} (Day ${idx + 1})` : cleanTitle;
+        results.push({
+          id: "",
+          title: occurrenceTitle,
+          joinUrl,
+          webinarId,
+          passcode,
+          scheduledDate: parsed,
+          description,
+        });
+      }
+    });
+  }
+
+  // Fallback to email date if no inline dates found
+  if (results.length === 0 && fallbackDate) {
+    const fb = new Date(fallbackDate);
+    if (!isNaN(fb.getTime())) {
+      results.push({
+        id: "",
+        title: cleanTitle || "Live Class / Webinar",
+        joinUrl,
+        webinarId,
+        passcode,
+        scheduledDate: fb,
+        description,
+      });
+    }
+  }
+
+  return results;
 }
 
 export const fetchGmailLiveClasses = async (userId: string): Promise<GmailClassEmail[]> => {
@@ -225,33 +237,37 @@ export const syncGmailClassesToFirestore = async (userId: string) => {
   });
 
   for (const email of emails) {
-    const parsed = parseClassEmail(email.subject, email.body, email.snippet, email.date);
-    if (!parsed || (!parsed.joinUrl && !parsed.webinarId)) continue;
+    const parsedList = parseClassEmails(email.subject, email.body, email.snippet, email.date);
 
-    const taskData = {
-      userId,
-      title: parsed.title,
-      description: parsed.description,
-      dueDate: Timestamp.fromDate(parsed.scheduledDate),
-      category: "Gmail",
-      status: "todo",
-      source: "gmail",
-      externalId: email.id,
-      joinUrl: parsed.joinUrl || "",
-      webinarId: parsed.webinarId || "",
-      updatedAt: Timestamp.now(),
-    };
+    for (let idx = 0; idx < parsedList.length; idx++) {
+      const parsed = parsedList[idx];
+      const externalId = `${email.id}_occ_${idx}`;
 
-    if (existingExternalIds.has(email.id)) {
-      const existingDocId = existingExternalIds.get(email.id)!;
-      await tasksCol.doc(existingDocId).update(taskData);
-      syncedTasks.push({ id: existingDocId, ...taskData });
-    } else {
-      const docRef = await tasksCol.add({
-        ...taskData,
-        createdAt: Timestamp.now(),
-      });
-      syncedTasks.push({ id: docRef.id, ...taskData });
+      const taskData = {
+        userId,
+        title: parsed.title,
+        description: parsed.description,
+        dueDate: Timestamp.fromDate(parsed.scheduledDate),
+        category: "Gmail",
+        status: "todo",
+        source: "gmail",
+        externalId,
+        joinUrl: parsed.joinUrl || "",
+        webinarId: parsed.webinarId || "",
+        updatedAt: Timestamp.now(),
+      };
+
+      if (existingExternalIds.has(externalId)) {
+        const existingDocId = existingExternalIds.get(externalId)!;
+        await tasksCol.doc(existingDocId).update(taskData);
+        syncedTasks.push({ id: existingDocId, ...taskData });
+      } else {
+        const docRef = await tasksCol.add({
+          ...taskData,
+          createdAt: Timestamp.now(),
+        });
+        syncedTasks.push({ id: docRef.id, ...taskData });
+      }
     }
   }
 
